@@ -19,15 +19,11 @@ void print_error_message_and_exit(void) {
 }
 
 
-int handle_waitpid(int pid, int exit_on_error) {
+int handle_waitpid(int pid) {
 	if (waitpid(pid, NULL, 0) == -1) { // waitpid failed
 		if (errno != ECHILD && errno != EINTR) { // those aren't considered as actual errors in our definition 
-			if (exit_on_error) {
-				print_error_message_and_exit();
-			} else {
-				print_error_message();
-				return -1; // '-1' means that there was a "fatal" error 
-			}
+			print_error_message();
+			return -1; // '-1' means that there was a "fatal" error 
 		}
 		return 1; // '1' means that there was an error, but not an actual error that requires exiting the shell
 	}
@@ -35,8 +31,13 @@ int handle_waitpid(int pid, int exit_on_error) {
 }
 
 
-void SIGCHLDHandler(int signum, siginfo_t *info, void *ptr) { // its formal purpose is to remove zombies
-	handle_waitpid(info->si_pid, 1);
+void SIGCHLDHandler() {
+    int val;
+    while ((val = waitpid(-1, NULL, WNOHANG))  > 0);
+    
+    if (val == -1 && errno != ECHILD && errno != EINTR) {
+    	print_error_message_and_exit();
+    }
 }
 
 
@@ -45,8 +46,8 @@ int prepare(void) {
 		return 1;
 	}
 	struct sigaction newActionForSIGCHLD = {
-	  .sa_sigaction = SIGCHLDHandler,
-	  .sa_flags = SA_SIGINFO | SA_RESTART
+	  .sa_handler = SIGCHLDHandler,
+	  .sa_flags = SA_RESTART
   	};
   	if (sigaction(SIGCHLD, &newActionForSIGCHLD, NULL) != 0) { // sigaction failed
   		return 1;
@@ -58,7 +59,7 @@ int prepare(void) {
 int finalize(void) {
 	// wait for all the child processes (more precisely, the background ones) to end (in order to remove zombies). Note that waitpid(-1, ...) is equivalent to wait(...);
 	while (1) {
-		int val = handle_waitpid(-1, 0);
+		int val = handle_waitpid(-1);
 		if (val == -1) { // waitpid failed
 			return 1;
 		}
@@ -120,7 +121,7 @@ int exeucte_regular(int count, char** arglist) {
 		register_foreground_signal_handler();
 		execute_command(arglist);
 	} else { // parent process
-		if (handle_waitpid(pid, 0) == -1) { // waitpid failed
+		if (handle_waitpid(pid) == -1) { // waitpid failed
 			print_error_message();
 			return 0;
 		}
@@ -186,7 +187,7 @@ int execute_piping(int count, char** arglist, int pipe_index) {
 				return 0;
 			}
 			// wait for the first child process to terminate
-			if (handle_waitpid(pid_first, 0) == -1) { // waitpid failed
+			if (handle_waitpid(pid_first) == -1) { // waitpid failed
 				print_error_message();
 				return 0;
 			}
@@ -202,11 +203,11 @@ int execute_piping(int count, char** arglist, int pipe_index) {
 				print_error_message();
 				return 0;
 			}
-			if (handle_waitpid(pid_first, 0) == -1) { // waitpid failed
+			if (handle_waitpid(pid_first) == -1) { // waitpid failed
 				print_error_message();
 				return 0;
 			}
-			if (handle_waitpid(pid_second, 0) == -1) { // waitpid failed
+			if (handle_waitpid(pid_second) == -1) { // waitpid failed
 				print_error_message();
 				return 0;
 			}
@@ -242,7 +243,7 @@ int execute_output_redirection(int count, char** arglist) {
 			print_error_message();
 			return 0;
 		}
-		if (handle_waitpid(pid, 0) == -1) { // waitpid failed
+		if (handle_waitpid(pid) == -1) { // waitpid failed
 			print_error_message();
 			return 0;
 		}
