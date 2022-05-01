@@ -30,7 +30,8 @@ int main(int argc, char* argv[]) {
 		print_error_message_and_exit("Failed to open the file");
 	}
 	
-	if (ioctl(fd, MSG_SLOT_CHANNEL, argv[2]) == -1) {
+	unsigned int channel_id = atoi(argv[2]);
+	if (ioctl(fd, MSG_SLOT_CHANNEL, channel_id) == -1) {
 		print_error_message_and_exit("Failed to open the message channel");
 	}
 	
@@ -44,10 +45,10 @@ int main(int argc, char* argv[]) {
 		print_error_message_and_exit("Failed to close the file");
 	}
 
-	ssize_t bytes_written = write(STDOUT_FILENO, buf, bytes_read); //print the message to standard output
+	ssize_t bytes_written = write(STDOUT_FILENO, buf, bytes_read); // print the message to standard output
 	if (bytes_written == -1 || bytes_written != bytes_read) {
 		print_error_message_and_exit("Failed to print the message");
 	}
 
-	exit(0); //success 
+	exit(0); // success 
 }

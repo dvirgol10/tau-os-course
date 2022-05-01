@@ -30,12 +30,13 @@ int main(int argc, char* argv[]) {
 		print_error_message_and_exit("Failed to open the file");
 	}
 	
-	if (ioctl(fd, MSG_SLOT_CHANNEL, argv[2]) == -1) {
+	unsigned int channel_id = atoi(argv[2]);
+	if (ioctl(fd, MSG_SLOT_CHANNEL, channel_id) == -1) {
 		print_error_message_and_exit("Failed to open the message channel");
 	}
 	
 	size_t message_len = strlen(argv[3]);
-	ssize_t bytes_written = write(fd, argv[3], message_len);
+	ssize_t bytes_written = write(fd, argv[3], message_len); // write the message to the device file
 	if (bytes_written == -1 || bytes_written != message_len) {
 		print_error_message_and_exit("Failed to write the message");
 	}
@@ -44,5 +45,5 @@ int main(int argc, char* argv[]) {
 		print_error_message_and_exit("Failed to close the file");
 	}
 
-	exit(0); //success 
+	exit(0); // success 
 }
