@@ -136,14 +136,16 @@ static ssize_t device_read(struct file* file, char __user* buffer, size_t length
 
 static ssize_t copy_user_buffer_to_message_channel(struct message_channel_node* message_channel_node, const char __user* buffer, size_t length) {
 	int i;
+	char* new_message = kmalloc(length, GFP_KERNEL);
 	for (i = 0; i < length; ++i) {
-		if (get_user(message_channel_node->message[i], buffer + i) < 0) { // get_user failed
-			message_channel_node->message_len = 0; // now there is no message on the channel
-			return -1;
+		if (get_user(new_message[i], buffer + i) < 0) { // get_user failed
+			return -1; // previouse message isn't changed
 		}
 	}
-	message_channel_node->message_len = i;
-	return i;
+	kfree(message_channel_node->message);
+	message_channel_node->message = new_message;
+	message_channel_node->message_len = length;
+	return length;
 }
 
 
