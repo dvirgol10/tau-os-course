@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
+
 char* root_dir;
 char* search_term;
 int num_threads;
@@ -16,6 +17,7 @@ mtx_t start_threads_mutex;
 mtx_t q_lock;
 cnd_t start_threads_cv;
 int start_threads_flag = 0;
+int num_waiting_to_lock = 0;
 
 // insert nodes to tail, extract from head
 struct dir_queue {
@@ -84,11 +86,10 @@ void dir_queue_enqueue(char* dir_path) {
 	new_dir_queue_node->path = dir_path;
 	if (is_dir_queue_empty()) {
 		dir_queue->head = new_dir_queue_node;
-		dir_queue->tail = new_dir_queue_node;
 	} else {
 		dir_queue->tail->next = new_dir_queue_node;
-		dir_queue->tail = new_dir_queue_node;
 	}
+	dir_queue->tail = new_dir_queue_node;
 	dir_queue->len += 1;
 }
 
@@ -151,6 +152,7 @@ cnd_t* thread_queue_dequeue() {
 	cnd_t* p_cv = thread_queue_head_node->p_cv;
 	free(thread_queue_head_node);
 	thread_queue->len -= 1;
+	num_waiting_to_lock += 1;
 	return p_cv;
 }
 
@@ -210,6 +212,7 @@ int is_dir(char* dir_path) {
 	struct stat buf;
 	//printf("%s\n", dir_path); //DEBUG
 	if (stat(dir_path, &buf) == -1) {
+		fprintf(stderr, "errno=%d and the failed path is %s\n", errno, dir_path);
 		print_error_message_and_exit_thread("'stat' failed");
 	}
 	return S_ISDIR(buf.st_mode);
@@ -286,12 +289,13 @@ int thread_func(void *thread_param) {
 			cnd_wait(p_not_empty_q_and_my_turn_cv, &q_lock);
 		}
 		*/
-		if (dir_queue->len <= thread_queue->len) {
+		if (dir_queue->len <= thread_queue->len + num_waiting_to_lock) {
 			thread_queue_enqueue(p_not_empty_q_and_my_turn_cv);
 			cnd_wait(p_not_empty_q_and_my_turn_cv, &q_lock);
+			num_waiting_to_lock -= 1;
 			dir_path = dir_queue_dequeue();
 		} else {
-			dir_path = dir_queue_remove(thread_queue->len);
+			dir_path = dir_queue_remove(thread_queue->len + num_waiting_to_lock);
 		}
 		mtx_unlock(&q_lock);
 		search_in_dir(dir_path);
