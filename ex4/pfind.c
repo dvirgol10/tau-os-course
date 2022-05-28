@@ -5,21 +5,22 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <errno.h>
 
 
 char* root_dir;
 char* search_term;
 int num_threads;
-int num_remaining_threads;
+atomic_int num_remaining_threads; // the number of threads which haven't exited as the result of an error
 atomic_int files_found = 0;
 
 mtx_t start_threads_mutex;
 mtx_t q_lock;
 cnd_t start_threads_cv;
-int start_threads_flag = 0;
-int num_waiting_to_lock = 0;
+int start_threads_flag = 0; // whether all the threads are created 
+int num_threads_waiting_to_lock = 0; // the number of threads that have been already woken up but couldn't get the lock; requires q_lock
 
-// insert nodes to tail, extract from head
+// insert nodes to tail, extract from head; requires q_lock
 struct dir_queue {
 	struct dir_queue_node* head;
 	struct dir_queue_node* tail;
@@ -31,7 +32,7 @@ struct dir_queue_node {
 	char* path;
 };
 
-// insert nodes to tail, extract from head
+// insert nodes to tail, extract from head; requires q_lock
 struct thread_queue {
 	struct thread_queue_node* head;
 	struct thread_queue_node* tail;
@@ -67,11 +68,15 @@ void print_error_message_and_exit(const char* s) {
 
 void print_error_message_and_exit_thread(const char* s) {
 	print_error_message(s);
-	num_remaining_threads -= 1;
-	if (num_remaining_threads == 0) {
+	if (--num_remaining_threads == 0) { // if there are no threads, we need to exit totally
 		exit_from_program();
 	}
 	thrd_exit(1);
+}
+
+
+void print_permission_denied(char* path) {
+	printf("Directory %s: Permission denied.\n", path);
 }
 
 
@@ -152,11 +157,12 @@ cnd_t* thread_queue_dequeue() {
 	cnd_t* p_cv = thread_queue_head_node->p_cv;
 	free(thread_queue_head_node);
 	thread_queue->len -= 1;
-	num_waiting_to_lock += 1;
+	num_threads_waiting_to_lock += 1;
 	return p_cv;
 }
 
 
+// a directory is searchable iff we can open it
 int is_searchable_dir(char* dir_path) {
 	DIR* dir = opendir(dir_path);
 	if (dir == NULL) {
@@ -210,10 +216,11 @@ int is_ignored(struct dirent* dirent) {
 
 int is_dir(char* dir_path) {
 	struct stat buf;
-	//printf("%s\n", dir_path); //DEBUG
 	if (stat(dir_path, &buf) == -1) {
-		fprintf(stderr, "errno=%d and the failed path is %s\n", errno, dir_path);
-		print_error_message_and_exit_thread("'stat' failed");
+		if (errno != 2) { // if errno equals 2 it means that we have a symlink which is not a directory
+			print_error_message_and_exit_thread("'stat' failed");
+		}
+		return 0;
 	}
 	return S_ISDIR(buf.st_mode);
 }
@@ -222,9 +229,10 @@ int is_dir(char* dir_path) {
 void search_in_dir(char* dir_path) {
 	char* new_path;
 	char* dirent_name;
+	int is_dir_new_path;
 	DIR* dir = opendir(dir_path);
 	if (dir == NULL) {
-		printf("Directory %s: Permission denied\n", dir_path);
+		print_permission_denied(dir_path);
 		return;
 	}
 	struct dirent* dirent;
@@ -233,13 +241,15 @@ void search_in_dir(char* dir_path) {
 			continue;
 		}
 		dirent_name = dirent->d_name;
+		// construct the path of the current dir entry (using the "base" path and the name of the entry)
 		new_path = calloc(strlen(dir_path) + strlen(dirent_name) + 2, sizeof(char)); // "+2": 1 for the "/" character and 1 for the null terminator 
 		new_path = strcpy(new_path, dir_path);
 		new_path = strcat(new_path, "/");
 		new_path = strcat(new_path, dirent_name);
-		if (is_dir(new_path)) { // if the entry is a directory
-			if (!is_searchable_dir(root_dir)) {
-				printf("Directory %s: Permission denied\n", new_path);
+		is_dir_new_path = is_dir(new_path);
+		if (is_dir_new_path == 1) { // if the entry is a directory
+			if (!is_searchable_dir(new_path)) { // if it isn't searchable we don't want to insert it to the dir queue
+				print_permission_denied(new_path);
 				free(new_path);
 			} else { // append the directory to the queue beacuse it's a valid one
 				mtx_lock(&q_lock);
@@ -265,41 +275,39 @@ void search_in_dir(char* dir_path) {
 
 // if there is at least one directory waiting for search or there is at least one busy searching thread, we need to continue the searching
 int are_there_directories_to_search() {
-	//printf("here\n"); //DEBUG
-	mtx_lock(&q_lock);
-	int res = !is_dir_queue_empty() || thread_queue->len + 1 != num_remaining_threads; // thread_queue->len + 1 == num_remaining_threads iff all the remaning threads except this one are idle (in the queue). Also this thread is idle beacuse when it calls this function it doesn't search
-	mtx_unlock(&q_lock);
-	//printf("res=%d\n", res); //DEBUG
-	return res;
+	return !is_dir_queue_empty() || thread_queue->len + 1 != num_remaining_threads; // thread_queue->len + 1 == num_remaining_threads iff all the remaning threads except this one are idle (in the queue). Also this thread is idle beacuse when it calls this function it doesn't search
 }
 
 
 int thread_func(void *thread_param) {
 	wait_for_all_threads_to_be_created(); // wait for all other searching threads to be created and for the main thread to signal that the searching should start
-	//printf("Hello!\n"); //DEBUG
+
 	char* dir_path;
-	cnd_t* p_not_empty_q_and_my_turn_cv = malloc(sizeof(cnd_t));
+	cnd_t* p_not_empty_q_and_my_turn_cv = malloc(sizeof(cnd_t)); // the cv of the current thread
 	cnd_init(p_not_empty_q_and_my_turn_cv);
-	while (are_there_directories_to_search()) { // we want to continue the searching if we can
+	while (1) { // we want to continue the searching if we can
 		mtx_lock(&q_lock);
-		/* if there aren't any waiting threads and the are directory in the queue, this current thread doesn't have to sleep.
-		So it waits only if the thread queue isn't empty or currently there aren't directories waiting for searching
-		if (!is_thread_queue_empty() || is_dir_queue_empty()) { 
-			thread_queue_enqueue(p_not_empty_q_and_my_turn_cv);
-			cnd_wait(p_not_empty_q_and_my_turn_cv, &q_lock);
+		if (!are_there_directories_to_search()) {
+			mtx_unlock(&q_lock);
+			break;
 		}
+		/* in order to satisfy the requirement of not going to sleep when the dir queue isn't "logically" empty,
+		we need to check if there are less directories than threads which waiting for searching
+		(the number of them is equal to the number of threads sleeping waiting in the queue plus
+		the number of threads which are already woke up but didn't manage obtaining the lock yet)
+		If this is indeed the case, we want to sleep. Otherwise, we can "take" a directory from the "middle" of the dir queue,
+		the one that matches to the current thread.
 		*/
-		if (dir_queue->len <= thread_queue->len + num_waiting_to_lock) {
+		if (dir_queue->len <= thread_queue->len + num_threads_waiting_to_lock) {
 			thread_queue_enqueue(p_not_empty_q_and_my_turn_cv);
 			cnd_wait(p_not_empty_q_and_my_turn_cv, &q_lock);
-			num_waiting_to_lock -= 1;
+			num_threads_waiting_to_lock -= 1;
 			dir_path = dir_queue_dequeue();
 		} else {
-			dir_path = dir_queue_remove(thread_queue->len + num_waiting_to_lock);
+			dir_path = dir_queue_remove(thread_queue->len + num_threads_waiting_to_lock); // remove the next directory in the queue, the one which is after all the directories that match to the already waiting threads
 		}
 		mtx_unlock(&q_lock);
 		search_in_dir(dir_path);
-		//free(dir_path);
 	}
 	cnd_destroy(p_not_empty_q_and_my_turn_cv);
 	free(p_not_empty_q_and_my_turn_cv);
@@ -337,8 +345,5 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	notify_all_threads_are_created(); // after all searching threads are created, the main thread signals them to start searching
-	/*for (int i = 0; i < num_threads; i++) {
-		thrd_join(threads[i], &thread_results[i]);
-	}*/
 	thrd_exit(0);
 }
