@@ -9,17 +9,6 @@
 #include <unistd.h>
 #include <endian.h>
 
-/*
-#include <sys/types.h>
-#include <netinet/in.h>
-#include <netdb.h>
-
-#include <string.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-
-#include <errno.h>*/
 
 #define MAX_BUF_LEN 1024
 
@@ -100,6 +89,9 @@ int main(int argc, char *argv[]) {
 	while (bytes_sent < file_size) {
 		if ((bytes_read = read(fd, buf, sizeof(buf))) == -1) {
 			print_error_message_and_exit("Failed to read the file content");
+		} else if (bytes_read == 0) {
+			fprintf(stderr, "EOF error");
+			exit(1);
 		}
 		if ((bytes_written = write(sockfd, buf, bytes_read)) == -1) {
 			print_error_message_and_exit("Failed to send data to the server");
@@ -114,6 +106,9 @@ int main(int argc, char *argv[]) {
 	while (bytes_recv < sizeof(n_pc_be)) {
 		if ((bytes_read = read(sockfd, &n_pc_be + bytes_recv, sizeof(n_pc_be) - bytes_recv)) == -1) {
 			print_error_message_and_exit("Failed to receive data from the server");
+		} else if (bytes_read == 0) {
+			fprintf(stderr, "EOF error");
+			exit(1);
 		}
 		bytes_recv += bytes_read;
 	}
