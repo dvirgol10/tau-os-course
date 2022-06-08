@@ -35,7 +35,7 @@ uint64_t get_file_size(char* path) {
 
 int main(int argc, char *argv[]) {
 	if (argc != 4) {
-		printf("You must pass 3 arguments\n");
+		fprintf(stderr, "You must pass 3 arguments\n");
 		exit(1);
 	}
 	char* serv_ip = argv[1];
@@ -52,11 +52,13 @@ int main(int argc, char *argv[]) {
 		print_error_message_and_exit("Failed to create a socket");
 	}
 
+	// convert serv_ip from string to in_addr
 	struct in_addr sin_addr;
 	if (inet_pton(AF_INET, serv_ip, &sin_addr) == -1) { // we don't have to handle the invalid return value '0' because we can assume serv_ip is a valid IP address
 		print_error_message_and_exit("Failed to convert the server IP address from text to binary");
 	}
 
+	//construct the server address data structure
 	struct sockaddr_in serv_addr; // where we want to get to
 	socklen_t addrsize = sizeof(struct sockaddr_in);
 	memset(&serv_addr, 0, sizeof(serv_addr));
@@ -68,25 +70,24 @@ int main(int argc, char *argv[]) {
 		print_error_message_and_exit("Failed to connect to the server");
 	}
 
+	// part (a) of the proctocol
 	uint64_t bytes_sent = 0;
 	uint64_t bytes_written = 0;
 	uint64_t file_size = get_file_size(file_path);
 	uint64_t file_size_be = htobe64(file_size);
-	// part (a) of the proctocol
-	while (bytes_sent < sizeof(file_size_be)) {
+	while (bytes_sent < sizeof(file_size_be)) { // send the message length (file size in bytes) to server
 		if ((bytes_written = write(sockfd, &file_size_be + bytes_sent, sizeof(file_size_be) - bytes_sent)) == -1) {
 			print_error_message_and_exit("Failed to send data to the server");
 		}
 		bytes_sent += bytes_written;
 	}
 
-
+	// part (b) of the proctocol
 	char buf[MAX_BUF_LEN];
 	bytes_written = 0;
 	bytes_sent = 0;
 	uint64_t bytes_read = 0;
-	// part (b) of the proctocol
-	while (bytes_sent < file_size) {
+	while (bytes_sent < file_size) { // send the message itself (the file's content) to server
 		if ((bytes_read = read(fd, buf, sizeof(buf))) == -1) {
 			print_error_message_and_exit("Failed to read the file content");
 		} else if (bytes_read == 0) {
@@ -99,11 +100,11 @@ int main(int argc, char *argv[]) {
 		bytes_sent += bytes_written;
 	}
 
+	// part (c) of the proctocol
 	uint64_t n_pc_be = 0;
 	uint64_t bytes_recv = 0;
 	bytes_read = 0;
-	// part (c) of the proctocol
-	while (bytes_recv < sizeof(n_pc_be)) {
+	while (bytes_recv < sizeof(n_pc_be)) { // receive the amount of printable characters from server
 		if ((bytes_read = read(sockfd, &n_pc_be + bytes_recv, sizeof(n_pc_be) - bytes_recv)) == -1) {
 			print_error_message_and_exit("Failed to receive data from the server");
 		} else if (bytes_read == 0) {
@@ -117,6 +118,6 @@ int main(int argc, char *argv[]) {
 		print_error_message_and_exit("Failed to close the socket");
 	}
 
-	printf("# of printable characters %lu\n", be64toh(n_pc_be));
+	printf("# of printable characters: %lu\n", be64toh(n_pc_be));
 	return 0;
 }
