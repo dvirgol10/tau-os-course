@@ -14,3 +14,9 @@ The goal is to gain experience with kernel programming and a better understangin
 # Fourth Assignment
 ## Parallel File Find Assignment
 The goal is to gain experience with threads (including locks and conditional variables) and filesystem system calls. We create a program which searches a directory tree for files whose name contains the search term. It parallelizes its work using threads - different directories are searched by different threads.
+
+# Fifth Assignment
+## Printable Characters Counting Server Assignment
+The goal is to gain experience with sockets and network programming. We implement a client-server architecture - a printable characters counting server.\
+Clients connect to the server and send it a stream of bytes (which are read from a file). The server sends the count back to the client and maintains a data structure in which it counts the number of times each printable character was observed in all the connections.\
+In addition, SIGINT makes the server print these counts and exit.
