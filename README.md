@@ -10,3 +10,7 @@ The shell supports executing regular commands, executing commands in the backgro
 # Third Assignment
 ## Message Slot Kernel Module Assignment
 The goal is to gain experience with kernel programming and a better understanging on the design and implementation of IPC, kernel moudules, and drivers. We implement a new IPC mechanism, called a _message slot_. This is a character device file which has multiple _message channels_ active concurrently. These channels can be used by multiple processes, which specify (with `ioctl()`) the id of the message channel they want to receive/send messages from/to (by using `read()/write()`).
+
+# Fourth Assignment
+## Parallel File Find Assignment
+The goal is to gain experience with threads (including locks and conditional variables) and filesystem system calls. We create a program which searches a directory tree for files whose name contains the search term. It parallelizes its work using threads - different directories are searched by different threads.
